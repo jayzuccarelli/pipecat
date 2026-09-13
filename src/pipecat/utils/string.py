@@ -33,9 +33,51 @@ from loguru import logger
 
 _load_lock = threading.Lock()
 
+_PUNKT_LANGUAGES = {
+    "cs": "czech",
+    "da": "danish",
+    "nl": "dutch",
+    "en": "english",
+    "et": "estonian",
+    "fi": "finnish",
+    "fr": "french",
+    "de": "german",
+    "el": "greek",
+    "it": "italian",
+    "ml": "malayalam",
+    "no": "norwegian",
+    "nb": "norwegian",
+    "nn": "norwegian",
+    "pl": "polish",
+    "pt": "portuguese",
+    "ru": "russian",
+    "sl": "slovene",
+    "es": "spanish",
+    "sv": "swedish",
+    "tr": "turkish",
+}
+
+
+def resolve_sentence_tokenizer_language(language: str | None) -> str:
+    """Resolve a language code or Punkt model name to a supported model.
+
+    Args:
+        language: Language code (including regional variants), model name, or
+            None. Unknown languages use English plus Pipecat's punctuation rules.
+
+    Returns:
+        The Punkt model name.
+    """
+    if not isinstance(language, str):
+        return "english"
+    normalized = language.lower().replace("_", "-")
+    if normalized in _PUNKT_LANGUAGES.values():
+        return normalized
+    return _PUNKT_LANGUAGES.get(normalized.split("-")[0], "english")
+
 
 @cache
-def _sent_tokenizer() -> Callable[[str], list[str]]:
+def _sent_tokenizer(language: str = "english") -> Callable[[str], list[str]]:
     """Load NLTK's sentence tokenizer and its ``punkt_tab`` data.
 
     NLTK reaches scikit-learn through its optional classifier backends, so
@@ -47,10 +89,13 @@ def _sent_tokenizer() -> Callable[[str], list[str]]:
     waits on the lock rather than loading alongside it, so the one-time
     ``punkt_tab`` download cannot run twice at once. The cache keeps the lock
     off the path once the tokenizer is loaded.
+
+    Args:
+        language: A Punkt model name.
     """
     with _load_lock:
         import nltk
-        from nltk.tokenize import sent_tokenize
+        from nltk.tokenize.punkt import PunktTokenizer
 
         try:
             nltk.data.find("tokenizers/punkt_tab")
@@ -67,7 +112,7 @@ def _sent_tokenizer() -> Callable[[str], list[str]]:
                     "writable directory. See https://www.nltk.org/data.html for more information."
                 )
 
-        return sent_tokenize
+        return PunktTokenizer(resolve_sentence_tokenizer_language(language)).tokenize
 
 
 SENTENCE_ENDING_PUNCTUATION: frozenset[str] = frozenset(
@@ -148,7 +193,7 @@ def replace_match(text: str, match: re.Match, old: str, new: str) -> str:
     return text
 
 
-def match_endofsentence(text: str) -> int:
+def match_endofsentence(text: str, *, language: str | None = None) -> int:
     """Find the position of the end of a sentence in the provided text.
 
     This function uses NLTK's sentence tokenizer to detect sentence boundaries
@@ -157,6 +202,7 @@ def match_endofsentence(text: str) -> int:
 
     Args:
         text: The input text in which to find the end of the sentence.
+        language: Language code or Punkt model name. Defaults to English.
 
     Returns:
         The position of the end of the sentence if found, otherwise 0.
@@ -167,7 +213,7 @@ def match_endofsentence(text: str) -> int:
         return 0
 
     # Use NLTK's sentence tokenizer to find sentence boundaries
-    sentences = _sent_tokenizer()(text)
+    sentences = _sent_tokenizer(resolve_sentence_tokenizer_language(language))(text)
 
     if not sentences:
         return 0
